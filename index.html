@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Financeiro Interativo</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background-color: #f4f6f8;
+      font-family: "Segoe UI", sans-serif;
+      color: #333;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+    }
+    h1 {
+      text-align: center;
+      color: #007bff;
+      margin-bottom: 10px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    input, button {
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    #exportar {
+      background-color: #28a745;
+    }
+    #exportar:hover {
+      background-color: #1d8133;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 15px;
+      margin-top: 20px;
+    }
+    .card {
+      background-color: white;
+      padding: 12px 14px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      cursor: pointer;
+      transition: 0.2s;
+      font-size: 14px;
+    }
+    .card:hover {
+      transform: scale(1.03);
+      background-color: #eef5ff;
+    }
+    .card strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    canvas {
+      display: block;
+      margin: 30px auto 0 auto;
+      background-color: white;
+      padding: 15px;
+      border-radius: 10px;
+      max-width: 100%;
+    }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📊 Dashboard Financeiro Interativo</h1>
+
+    <div class="topbar">
+      <input type="text" id="ticker" placeholder="Ticker ex: AAPL, NVDA, TSLA">
+      <button onclick="carregarDados()">Analisar</button>
+      <button id="exportar" onclick="exportarCSV()">📤 Exportar CSV</button>
+    </div>
+
+    <div id="dados" class="grid"></div>
+    <canvas id="grafico"></canvas>
+  </div>
+
+  <script>
+    const apiKey = "ZLHO4IELDHM41XC0";
+    let dadosAtuais = { ticker: null, metric: null };
+    let chartAtual = null;
+
+    async function carregarDados() {
+      const ticker = document.getElementById("ticker").value.trim().toUpperCase();
+      if (!ticker) {
+        alert("Insere um ticker válido.");
+        return;
+      }
+
+      try {
+        const url = `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${apiKey}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!data.metric) {
+          alert("Não foi possível obter dados para esse ticker.");
+          return;
+        }
+
+        const m = data.metric;
+        dadosAtuais = { ticker, metric: m };
+
+        const infos = {
+          "Receita (TTM)": m.revenueTTM,
+          "Margem Bruta": m.grossMarginTTM,
+          "Margem Operacional": m.operatingMarginTTM,
+          "ROE": m.roeTTM,
+          "ROA": m.roaTTM,
+          "FCF (TTM)": m.freeCashFlowTTM,
+          "EPS (TTM)": m.epsBasicExclExtraItemsTTM,
+          "Dividend Yield": m.dividendYieldTTM,
+          "Dívida/Capital": m.totalDebtToEquityQuarterly,
+          "Current Ratio": m.currentRatioQuarterly,
+          "P/L": m.peBasicExclExtraTTM
+        };
+
+        const container = document.getElementById("dados");
+        container.innerHTML = "";
+
+        for (const [label, valor] of Object.entries(infos)) {
+          if (valor !== null && valor !== undefined) {
+            const card = document.createElement("div");
+            card.className = "card";
+            card.innerHTML = `<strong>${label}</strong>${valor.toFixed(2)}`;
+            card.onclick = () => mostrarGrafico(ticker, label);
+            container.appendChild(card);
+          }
+        }
+      } catch (e) {
+        alert("Erro a carregar dados. Verifica o ticker ou tenta mais tarde.");
+        console.error(e);
+      }
+    }
+
+    async function mostrarGrafico(ticker, label) {
+      const ctx = document.getElementById("grafico");
+
+      if (chartAtual) {
+        chartAtual.destroy();
+      }
+
+      let chartData;
+      let titulo = label + " (" + ticker + ")";
+
+      try {
+        if (label.includes("Dividend")) {
+          chartData = await buscarDividendos(ticker);
+          titulo = "Histórico de Dividendos (" + ticker + ")";
+        } else if (label.includes("EPS")) {
+          chartData = await buscarEPS(ticker);
+          titulo = "Lucro por Ação - EPS (" + ticker + ")";
+        } else if (label.includes("FCF")) {
+          chartData = await buscarFCF(ticker);
+          titulo = "Free Cash Flow (" + ticker + ")";
+        } else {
+          chartData = await buscarPreco(ticker);
+          titulo = "Preço de Fecho (" + ticker + ")";
+        }
+
+        chartAtual = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: chartData.labels,
+            datasets: [{
+              label: titulo,
+              data: chartData.values,
+              borderColor: "#007bff",
+              backgroundColor: "rgba(0,123,255,0.1)",
+              fill: true,
+              tension: 0.2
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: {
+                ticks: { autoSkip: true, maxTicksLimit: 12 }
+              },
+              y: {
+                beginAtZero: false
+              }
+            }
+          }
+        });
+      } catch (e) {
+        alert("Erro ao gerar gráfico.");
+        console.error(e);
+      }
+    }
+
+    async function buscarPreco(ticker) {
+      const from = 1609459200; // 2021-01-01
+      const to = Math.floor(Date.now() / 1000);
+      const url = `https://finnhub.io/api/v1/stock/candle?symbol=${ticker}&resolution=M&from=${from}&to=${to}&token=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      return {
+        labels: (data.t || []).map(t => new Date(t * 1000).toLocaleDateString()),
+        values: data.c || []
+      };
+    }
+
+    async function buscarDividendos(ticker) {
+      const url = `https://finnhub.io/api/v1/stock/dividend?symbol=${ticker}&from=2018-01-01&to=2026-12-31&token=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      return {
+        labels: data.map(d => d.paymentDate),
+        values: data.map(d => d.amount)
+      };
+    }
+
+    async function buscarEPS(ticker) {
+      const url = `https://finnhub.io/api/v1/stock/earnings?symbol=${ticker}&token=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      return {
+        labels: data.map(e => e.period),
+        values: data.map(e => e.actual)
+      };
+    }
+
+    async function buscarFCF(ticker) {
+      const url = `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=cashflow&token=${apiKey}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      const v = data.metric && data.metric.freeCashFlowTTM ? data.metric.freeCashFlowTTM : null;
+
+      return {
+        labels: ["Último Ano"],
+        values: v !== null ? [v] : []
+      };
+    }
+
+    function exportarCSV() {
+      if (!dadosAtuais.metric) {
+        alert("Carrega primeiro um ticker antes de exportar.");
+        return;
+      }
+
+      const linhas = [["Ticker", dadosAtuais.ticker], [], ["Indicador", "Valor"]];
+      for (const [chave, valor] of Object.entries(dadosAtuais.metric)) {
+        if (valor !== null && typeof valor !== "object") {
+          linhas.push([chave, valor]);
+        }
+      }
+
+      const csv = linhas.map(l => l.join(",")).join("
+");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${dadosAtuais.ticker}_dados_finnhub.csv`;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
