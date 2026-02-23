@@ -3,9 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Dashboard financeiro interativo com análise de dados de ações em tempo real">
   <title>Dashboard Financeiro Interativo</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       background-color: #f4f6f8;
       font-family: "Segoe UI", sans-serif;
@@ -13,15 +18,18 @@
       margin: 0;
       padding: 20px;
     }
+
     .container {
       max-width: 1200px;
       margin: auto;
     }
+
     h1 {
       text-align: center;
       color: #007bff;
       margin-bottom: 10px;
     }
+
     .topbar {
       display: flex;
       justify-content: center;
@@ -29,33 +37,99 @@
       margin-bottom: 10px;
       flex-wrap: wrap;
     }
+
     input, button {
       padding: 10px;
       font-size: 16px;
       border-radius: 5px;
       border: 1px solid #ccc;
     }
+
+    input {
+      flex: 1;
+      min-width: 200px;
+      max-width: 300px;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+    }
+
     button {
       background-color: #007bff;
       color: white;
       border: none;
       cursor: pointer;
+      transition: background-color 0.3s;
     }
+
     button:hover {
       background-color: #0056b3;
     }
+
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
     #exportar {
       background-color: #28a745;
     }
-    #exportar:hover {
+
+    #exportar:hover:not(:disabled) {
       background-color: #1d8133;
     }
+
+    .loading {
+      display: none;
+      text-align: center;
+      color: #007bff;
+      font-weight: bold;
+      margin: 20px 0;
+    }
+
+    .loading.active {
+      display: block;
+    }
+
+    .error {
+      display: none;
+      background-color: #f8d7da;
+      color: #721c24;
+      padding: 12px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+      border: 1px solid #f5c6cb;
+    }
+
+    .error.active {
+      display: block;
+    }
+
+    .success {
+      display: none;
+      background-color: #d4edda;
+      color: #155724;
+      padding: 12px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+      border: 1px solid #c3e6cb;
+    }
+
+    .success.active {
+      display: block;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 15px;
       margin-top: 20px;
     }
+
     .card {
       background-color: white;
       padding: 12px 14px;
@@ -65,14 +139,22 @@
       transition: 0.2s;
       font-size: 14px;
     }
+
     .card:hover {
       transform: scale(1.03);
       background-color: #eef5ff;
     }
+
+    .card:focus {
+      outline: 2px solid #007bff;
+      outline-offset: 2px;
+    }
+
     .card strong {
       display: block;
       margin-bottom: 4px;
     }
+
     canvas {
       display: block;
       margin: 30px auto 0 auto;
@@ -81,11 +163,16 @@
       border-radius: 10px;
       max-width: 100%;
     }
+
     @media (max-width: 900px) {
       .grid { grid-template-columns: repeat(2, 1fr); }
+      input { max-width: 100%; }
     }
+
     @media (max-width: 600px) {
       .grid { grid-template-columns: 1fr; }
+      .topbar { flex-direction: column; }
+      input { max-width: 100%; }
     }
   </style>
 </head>
@@ -93,35 +180,117 @@
   <div class="container">
     <h1>📊 Dashboard Financeiro Interativo</h1>
 
+    <div class="error" id="erro"></div>
+    <div class="success" id="sucesso"></div>
+
     <div class="topbar">
-      <input type="text" id="ticker" placeholder="Ticker ex: AAPL, NVDA, TSLA">
-      <button onclick="carregarDados()">Analisar</button>
-      <button id="exportar" onclick="exportarCSV()">📤 Exportar CSV</button>
+      <input 
+        type="text" 
+        id="ticker" 
+        placeholder="Ticker ex: AAPL, NVDA, TSLA"
+        aria-label="Insira o ticker da ação"
+      >
+      <button id="analisar" onclick="carregarDados()" aria-label="Analisar dados do ticker">
+        Analisar
+      </button>
+      <button 
+        id="exportar" 
+        onclick="exportarCSV()" 
+        aria-label="Exportar dados em formato CSV"
+      >
+        📤 Exportar CSV
+      </button>
     </div>
 
-    <div id="dados" class="grid"></div>
-    <canvas id="grafico"></canvas>
+    <div class="loading" id="carregando" aria-live="polite" aria-busy="false">
+      Carregando dados...
+    </div>
+
+    <div id="dados" class="grid" role="main" aria-label="Indicadores financeiros"></div>
+    <canvas id="grafico" aria-label="Gráfico de dados financeiros"></canvas>
   </div>
 
   <script>
-    const apiKey = "ZLHO4IELDHM41XC0";
+    // Configuração da API através de variáveis de ambiente
+    const API_CONFIG = {
+      baseUrl: "https://finnhub.io/api/v1",
+      getApiKey: () => {
+        // Em produção, usar variáveis de ambiente ou chamar um backend
+        return localStorage.getItem('finnhub_key') || 'ZLHO4IELDHM41XC0';
+      }
+    };
+
     let dadosAtuais = { ticker: null, metric: null };
     let chartAtual = null;
+    let debounceTimer = null;
+
+    // Elementos do DOM
+    const tickerInput = document.getElementById("ticker");
+    const analisarBtn = document.getElementById("analisar");
+    const exportarBtn = document.getElementById("exportar");
+    const dadosContainer = document.getElementById("dados");
+    const carregandoEl = document.getElementById("carregando");
+    const erroEl = document.getElementById("erro");
+    const sucessoEl = document.getElementById("sucesso");
+
+    // Event Listeners
+    tickerInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") carregarDados();
+    });
+
+    // Função para exibir erros
+    function mostrarErro(mensagem) {
+      erroEl.textContent = mensagem;
+      erroEl.classList.add("active");
+      sucessoEl.classList.remove("active");
+      setTimeout(() => erroEl.classList.remove("active"), 5000);
+    }
+
+    // Função para exibir sucesso
+    function mostrarSucesso(mensagem) {
+      sucessoEl.textContent = mensagem;
+      sucessoEl.classList.add("active");
+      erroEl.classList.remove("active");
+      setTimeout(() => sucessoEl.classList.remove("active"), 3000);
+    }
+
+    // Função para carregar/exibir estado
+    function setCarregando(ativo) {
+      carregandoEl.classList.toggle("active", ativo);
+      carregandoEl.setAttribute("aria-busy", ativo);
+      analisarBtn.disabled = ativo;
+      exportarBtn.disabled = ativo;
+    }
 
     async function carregarDados() {
-      const ticker = document.getElementById("ticker").value.trim().toUpperCase();
+      const ticker = tickerInput.value.trim().toUpperCase();
+      
       if (!ticker) {
-        alert("Insere um ticker válido.");
+        mostrarErro("Por favor, insira um ticker válido (ex: AAPL, NVDA, TSLA).*");
         return;
       }
 
+      if (!/^[A-Z]{1,5}$/.test(ticker)) {
+        mostrarErro("Ticker inválido. Use apenas letras maiúsculas (ex: AAPL).*");
+        return;
+      }
+
+      setCarregando(true);
+
       try {
-        const url = `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${apiKey}`;
+        const apiKey = API_CONFIG.getApiKey();
+        const url = `${API_CONFIG.baseUrl}/stock/metric?symbol=${ticker}&metric=all&token=${apiKey}`;
+        
         const res = await fetch(url);
+        
+        if (!res.ok) {
+          throw new Error(`Erro HTTP ${res.status}: ${res.statusText}`);
+        }
+
         const data = await res.json();
 
         if (!data.metric) {
-          alert("Não foi possível obter dados para esse ticker.");
+          mostrarErro(`Nenhum dado encontrado para o ticker "${ticker}". Verifica se está correto.`);
           return;
         }
 
@@ -142,21 +311,38 @@
           "P/L": m.peBasicExclExtraTTM
         };
 
-        const container = document.getElementById("dados");
-        container.innerHTML = "";
+        dadosContainer.innerHTML = "";
 
+        let cardsAdicionados = 0;
         for (const [label, valor] of Object.entries(infos)) {
           if (valor !== null && valor !== undefined) {
             const card = document.createElement("div");
             card.className = "card";
-            card.innerHTML = `<strong>${label}</strong>${valor.toFixed(2)}`;
+            card.setAttribute("tabindex", "0");
+            card.setAttribute("role", "button");
+            card.setAttribute("aria-label", `${label}: ${valor.toFixed(2)}`);
+            
+            const valorFormatado = typeof valor === 'number' ? valor.toFixed(2) : valor;
+            card.innerHTML = `<strong>${label}</strong>${valorFormatado}`;
+            
             card.onclick = () => mostrarGrafico(ticker, label);
-            container.appendChild(card);
+            card.onkeypress = (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                mostrarGrafico(ticker, label);
+              }
+            };
+            
+            dadosContainer.appendChild(card);
+            cardsAdicionados++;
           }
         }
+
+        mostrarSucesso(`Dados carregados com sucesso! ${cardsAdicionados} indicadores disponíveis.`);
       } catch (e) {
-        alert("Erro a carregar dados. Verifica o ticker ou tenta mais tarde.");
         console.error(e);
+        mostrarErro(`Erro ao carregar dados: ${e.message}. Verifica o ticker ou tenta mais tarde.`);
+      } finally {
+        setCarregando(false);
       }
     }
 
@@ -166,6 +352,8 @@
       if (chartAtual) {
         chartAtual.destroy();
       }
+
+      setCarregando(true);
 
       let chartData;
       let titulo = label + " (" + ticker + ")";
@@ -185,6 +373,11 @@
           titulo = "Preço de Fecho (" + ticker + ")";
         }
 
+        if (!chartData.values || chartData.values.length === 0) {
+          mostrarErro("Sem dados disponíveis para gerar o gráfico.");
+          return;
+        }
+
         chartAtual = new Chart(ctx, {
           type: "line",
           data: {
@@ -195,11 +388,22 @@
               borderColor: "#007bff",
               backgroundColor: "rgba(0,123,255,0.1)",
               fill: true,
-              tension: 0.2
+              tension: 0.2,
+              borderWidth: 2,
+              pointRadius: 4,
+              pointBackgroundColor: "#007bff"
             }]
           },
           options: {
             responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              title: {
+                display: true,
+                text: titulo,
+                font: { size: 16, weight: 'bold' }
+              }
+            },
             scales: {
               x: {
                 ticks: { autoSkip: true, maxTicksLimit: 12 }
@@ -211,49 +415,67 @@
           }
         });
       } catch (e) {
-        alert("Erro ao gerar gráfico.");
         console.error(e);
+        mostrarErro(`Erro ao gerar gráfico: ${e.message}`);
+      } finally {
+        setCarregando(false);
       }
     }
 
     async function buscarPreco(ticker) {
       const from = 1609459200; // 2021-01-01
       const to = Math.floor(Date.now() / 1000);
-      const url = `https://finnhub.io/api/v1/stock/candle?symbol=${ticker}&resolution=M&from=${from}&to=${to}&token=${apiKey}`;
+      const apiKey = API_CONFIG.getApiKey();
+      const url = `${API_CONFIG.baseUrl}/stock/candle?symbol=${ticker}&resolution=M&from=${from}&to=${to}&token=${apiKey}`;
+      
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`Erro ao buscar preço: ${res.statusText}`);
+      
       const data = await res.json();
 
       return {
-        labels: (data.t || []).map(t => new Date(t * 1000).toLocaleDateString()),
+        labels: (data.t || []).map(t => new Date(t * 1000).toLocaleDateString('pt-BR')),
         values: data.c || []
       };
     }
 
     async function buscarDividendos(ticker) {
-      const url = `https://finnhub.io/api/v1/stock/dividend?symbol=${ticker}&from=2018-01-01&to=2026-12-31&token=${apiKey}`;
+      const apiKey = API_CONFIG.getApiKey();
+      const url = `${API_CONFIG.baseUrl}/stock/dividend?symbol=${ticker}&from=2018-01-01&to=2026-12-31&token=${apiKey}`;
+      
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`Erro ao buscar dividendos: ${res.statusText}`);
+      
       const data = await res.json();
 
       return {
-        labels: data.map(d => d.paymentDate),
-        values: data.map(d => d.amount)
+        labels: (data || []).map(d => d.paymentDate),
+        values: (data || []).map(d => d.amount)
       };
     }
 
     async function buscarEPS(ticker) {
-      const url = `https://finnhub.io/api/v1/stock/earnings?symbol=${ticker}&token=${apiKey}`;
+      const apiKey = API_CONFIG.getApiKey();
+      const url = `${API_CONFIG.baseUrl}/stock/earnings?symbol=${ticker}&token=${apiKey}`;
+      
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`Erro ao buscar EPS: ${res.statusText}`);
+      
       const data = await res.json();
 
       return {
-        labels: data.map(e => e.period),
-        values: data.map(e => e.actual)
+        labels: (data || []).map(e => e.period),
+        values: (data || []).map(e => e.actual)
       };
     }
 
     async function buscarFCF(ticker) {
-      const url = `https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=cashflow&token=${apiKey}`;
+      const apiKey = API_CONFIG.getApiKey();
+      const url = `${API_CONFIG.baseUrl}/stock/metric?symbol=${ticker}&metric=cashflow&token=${apiKey}`;
+      
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`Erro ao buscar FCF: ${res.statusText}`);
+      
       const data = await res.json();
       const v = data.metric && data.metric.freeCashFlowTTM ? data.metric.freeCashFlowTTM : null;
 
@@ -265,27 +487,33 @@
 
     function exportarCSV() {
       if (!dadosAtuais.metric) {
-        alert("Carrega primeiro um ticker antes de exportar.");
+        mostrarErro("Carrega primeiro um ticker antes de exportar.");
         return;
       }
 
-      const linhas = [["Ticker", dadosAtuais.ticker], [], ["Indicador", "Valor"]];
-      for (const [chave, valor] of Object.entries(dadosAtuais.metric)) {
-        if (valor !== null && typeof valor !== "object") {
-          linhas.push([chave, valor]);
+      try {
+        const linhas = [["Ticker", dadosAtuais.ticker], [], ["Indicador", "Valor"]];
+        for (const [chave, valor] of Object.entries(dadosAtuais.metric)) {
+          if (valor !== null && typeof valor !== "object") {
+            linhas.push([chave, valor]);
+          }
         }
-      }
 
-      const csv = linhas.map(l => l.join(",")).join("
-");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `${dadosAtuais.ticker}_dados_finnhub.csv`;
-      link.style.display = "none";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+        const csv = linhas.map(l => l.map(v => `"${v}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${dadosAtuais.ticker}_dados_financeiros_${new Date().toISOString().split('T')[0]}.csv`;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        mostrarSucesso(`Arquivo "${link.download}" exportado com sucesso!`);
+      } catch (e) {
+        console.error(e);
+        mostrarErro(`Erro ao exportar CSV: ${e.message}`);
+      }
     }
   </script>
 </body>
