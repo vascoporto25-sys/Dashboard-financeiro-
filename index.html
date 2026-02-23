@@ -3,99 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Financeiro</title>
+    <title>Financial Dashboard</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // Security improvements: prepared for backend API integration, removed hardcoded keys.
-        const API_URL = process.env.API_URL;
-        const keys = { apiKey: process.env.API_KEY };
+        // Caching theme to localStorage
+        const setTheme = (theme) => {
+            document.body.classList.toggle('dark-mode', theme === 'dark');
+            localStorage.setItem('theme', theme);
+        };
 
-        // Performance optimizations
-        class Cache {
-            constructor(expiryInMinutes) {
-                this.expiry = expiryInMinutes * 60 * 1000;
-                this.store = {};
-            }
-            set(key, value) {
-                this.store[key] = { value, expiry: Date.now() + this.expiry };
-            }
-            get(key) {
-                if (this.store[key] && this.store[key].expiry > Date.now()) {
-                    return this.store[key].value;
+        const loadTheme = () => {
+            const theme = localStorage.getItem('theme') || 'light';
+            setTheme(theme);
+        };
+
+        const toggleTheme = () => {
+            const currentTheme = localStorage.getItem('theme');
+            setTheme(currentTheme === 'dark' ? 'light' : 'dark');
+        };
+
+        // Error handling with retry logic
+        const fetchData = async (url, retries = 3) => {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
                 }
-                return null;
+                return await response.json();
+            } catch (error) {
+                if (retries > 0) {
+                    console.error('Fetch failed, retries left:', retries);
+                    return fetchData(url, retries - 1);
+                } else {
+                    console.error('Fetch error:', error);
+                    alert('Failed to fetch data');
+                }
             }
-        }
+        };
 
-        const cache = new Cache(5);
-
-        async function fetchData(url) {
-            let attempts = 0;
-            while (attempts < 3) {
-                try {
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error('Network response was not ok');
-                    const data = await response.json();
-                    return data;
-                } catch (error) {
-                    attempts += 1;
-                    if (attempts === 3) {
-                        console.error(obterMensagemErro(error));
+        const renderChart = (data) => {
+            const ctx = document.getElementById('myChart');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Financial Data',
+                        data: data.values,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
                     }
                 }
-            }
-        }
+            });
+        };
 
-        // Formatting functions
-        function formatarMoeda(valor) {
-            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
-        }
-        function formatarPercentual(valor) {
-            return `${valor.toFixed(2)}%`;
-        }
-        function formatarNumero(valor) {
-            if (valor >= 1000000) return (valor / 1000000).toFixed(1) + 'M';
-            if (valor >= 1000) return (valor / 1000).toFixed(1) + 'K';
-            return valor;
-        }
-
-        // UI/UX improvements
-        function toggleDarkMode() {
-            document.body.classList.toggle('dark-mode');
-            localStorage.setItem('dark-mode', document.body.classList.contains('dark-mode'));
-        }
+        const initDashboard = async () => {
+            loadTheme();
+            const data = await fetchData('api/financial-data');
+            renderChart(data);
+        };
 
         document.addEventListener('DOMContentLoaded', () => {
-            const darkModeToggle = document.getElementById('darkModeToggle');
-            darkModeToggle.addEventListener('click', toggleDarkMode);
-            if (localStorage.getItem('dark-mode') === 'true') {
-                document.body.classList.add('dark-mode');
-            }
+            document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+            initDashboard();
         });
-
-        // Accessibility enhancements
-        function obterMensagemErro(error) {
-            const ERROS_CONHECIDOS = {
-                404: 'Resource not found.',
-                500: 'Internal server error.',
-                // Add more known errors as required
-            };
-            return ERROS_CONHECIDOS[error.code] || 'An unexpected error occurred.';
-        }
     </script>
 </head>
 <body>
     <header>
-        <h1>Welcome to The Finance Dashboard</h1>
-        <button id="darkModeToggle">Toggle Dark Mode</button>
+        <h1>Financial Dashboard</h1>
+        <button id="theme-toggle">Toggle Dark Mode</button>
     </header>
     <main>
-        <section>
-            <p>Your financial data will be displayed here.</p>
+        <section id="metrics">
+            <h2>Metrics</h2>
+            <!-- Metrics Overview Here -->
+        </section>
+        <section id="charts">
+            <h2>Charts</h2>
+            <canvas id="myChart"></canvas>
         </section>
     </main>
     <footer>
-        <p>Copyright &copy; 2026</p>
+        <p>&copy; 2026 Dashboard Finance. All rights reserved.</p>
     </footer>
 </body>
 </html>
